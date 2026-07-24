@@ -9,5 +9,5 @@ export const metadata: Metadata = {
 };
 
 export default function DashboardPage() {
-  return <NfcApp mode="owner" />;
+  return <NfcApp />;
 }

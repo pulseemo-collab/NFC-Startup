@@ -18,8 +18,7 @@
 
 import type { OrderSnapshot, OrderStatus } from "@/types";
 import type { OrdersResult, OrderResult, MutationResult, StatsResult, DashboardStats } from "@/lib/data/types";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireOwner } from "@/lib/data/owner-guard";
 
 // Keep this list in sync with the columns in 0001_initial_schema.sql.
 const COLUMNS =
@@ -108,27 +107,6 @@ function toRow(o: OrderSnapshot, opts: { preserveNumber: boolean }) {
 function fail(prefix: string, error: unknown): { ok: false; error: string } {
   const msg = error instanceof Error ? error.message : String(error);
   return { ok: false, error: `${prefix}: ${msg}` };
-}
-
-/**
- * Gate every dashboard operation behind a valid, allowlisted owner session.
- * Returns the request-scoped (RLS-bound) client on success, or a clear error.
- */
-async function requireOwner(): Promise<{ ok: true; supabase: SupabaseClient } | { ok: false; error: string }> {
-  const supabase = createSupabaseServerClient();
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
-  if (authError || !user) {
-    return { ok: false, error: "Not authenticated: no active session." };
-  }
-  // Owner allowlist check (is_owner() reads app_owners; see migration 0003).
-  // RLS would deny the rows anyway, but this yields a precise message.
-  const { data: isOwner, error: ownerError } = await supabase.rpc("is_owner");
-  if (ownerError) return { ok: false, error: `Authorization check failed: ${ownerError.message}` };
-  if (!isOwner) return { ok: false, error: "Not authorized: this account is not an owner." };
-  return { ok: true, supabase };
 }
 
 /** All orders, newest first. Dashboard-only (returns private fields). */

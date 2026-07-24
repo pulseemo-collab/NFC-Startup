@@ -1,8 +1,8 @@
 "use client";
 
-import type { OrderSnapshot } from "@/types";
-import { formatAmount } from "@/lib/pricing";
+import { formatAmount } from "@/lib/currency";
 import { t, CLIENT_ORDER_STATUS_LABEL } from "@/lib/i18n";
+import type { ClientReceipt } from "@/lib/data/catalog-types";
 
 // CLIENT-SAFE. Renders ONLY from the saved snapshot and never shows
 // cost, profit, margin, pricing rules, owner notes, or settings.
@@ -12,7 +12,10 @@ export default function ClientOrderView({
   backLabel,
   confirmation,
 }: {
-  order: OrderSnapshot;
+  // Narrow, PUBLIC-only shape. OrderSnapshot (owner) is structurally assignable,
+  // so OrderDetail can still pass a full order here, but this component can only
+  // ever read customer-safe fields — never cost / profit / margin.
+  order: ClientReceipt;
   onBack: () => void;
   backLabel: string;
   /** True right after the customer submits — adds the contact and closing sections. */

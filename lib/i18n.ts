@@ -54,7 +54,7 @@ export const t = {
   minMargin: "Marzhi minimal (%)",
   minProfit: "Fitimi minimal",
   bundleDiscountPct: "Zbritja e paketës (%)",
-  settingsSaved: "Cilësimet dhe kostot ruhen në këtë shfletues (localStorage).",
+  settingsSaved: "Cilësimet ruhen automatikisht në llogarinë tuaj.",
   close: "Mbyll",
 
   // orders
@@ -65,6 +65,8 @@ export const t = {
   orderSavedSuccess: "Porosia u ruajt me sukses.",
   saveError: "Ruajtja dështoi. Provoni përsëri.",
   loadError: "Ngarkimi i porosive dështoi.",
+  catalogError: "Katalogu nuk u ngarkua. Ju lutemi rifreskoni faqen.",
+  productsLoadError: "Ngarkimi i produkteve dështoi.",
   orderNumber: "Numri i porosisë",
   businessName: "Emri i biznesit",
   customerName: "Emri i klientit",
