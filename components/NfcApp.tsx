@@ -10,12 +10,18 @@ import {
   buildOrder,
   duplicateOrder,
   isValidBackup,
-  loadOrders,
   refreezeOrder,
-  saveOrders,
   selectionFromOrder,
   type OrderFormInput,
 } from "@/lib/orders";
+import {
+  getOrders,
+  adminCreateOrder,
+  updateOrder as updateOrderRemote,
+  deleteOrder as deleteOrderRemote,
+  replaceAllOrders,
+} from "@/lib/data/orders";
+import { createPublicOrder } from "@/lib/data/public-orders";
 import type { PriceOverrides } from "@/lib/pricing";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
 import { t } from "@/lib/i18n";
@@ -61,18 +67,15 @@ export default function NfcApp({ mode }: { mode: Exclude<AppMode, "select"> }) {
   const [ownerView, setOwnerView] = useState<OwnerView>("builder");
   const [clientView, setClientView] = useState<ClientView>("builder");
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
-  const [clientOrderId, setClientOrderId] = useState<string | null>(null);
+  // The just-created order for the public receipt. The public site never loads
+  // the order list, so the receipt renders from this in-memory snapshot.
+  const [clientReceipt, setClientReceipt] = useState<OrderSnapshot | null>(null);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [closeFormOpen, setCloseFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
   const savingRef = useRef(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const submitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => () => {
-    if (submitTimer.current) clearTimeout(submitTimer.current);
-  }, []);
 
   useEffect(() => {
     setSettings(loadJSON(KEYS.settings, DEFAULT_SETTINGS));
@@ -81,8 +84,22 @@ export default function NfcApp({ mode }: { mode: Exclude<AppMode, "select"> }) {
     const sel = loadJSON(KEYS.selection, defaultSel());
     setSelection(sel.selection ?? { ...bundles[0].kit });
     setActivePreset(sel.activePreset ?? bundles[0].id);
-    setStore(loadOrders());
-    setHydrated(true);
+
+    // Orders live in Supabase now. Only the owner dashboard loads the full list;
+    // the public site never reads orders (it can only create one).
+    if (mode === "owner") {
+      getOrders().then((res) => {
+        if (res.ok) setStore({ version: 1, counter: 0, orders: res.orders });
+        else {
+          console.error("[orders] load:", res.error);
+          showToast(t.loadError);
+        }
+        setHydrated(true);
+      });
+    } else {
+      setHydrated(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -144,10 +161,14 @@ export default function NfcApp({ mode }: { mode: Exclude<AppMode, "select"> }) {
   };
 
   // ---- order handlers ----
-  const persist = (next: OrderStore) => {
-    setStore(next);
-    saveOrders(next);
+  // Surface a failed persistence op: friendly toast for the user, full detail
+  // for the developer (the app never loses an order silently).
+  const reportError = (detail: string) => {
+    console.error("[orders]", detail);
+    showToast(t.saveError);
   };
+  const replaceInStore = (o: OrderSnapshot) =>
+    setStore((s) => ({ ...s, orders: s.orders.map((x) => (x.id === o.id ? o : x)) }));
 
   const openCloseForm = () => {
     savingRef.current = false;
@@ -155,13 +176,14 @@ export default function NfcApp({ mode }: { mode: Exclude<AppMode, "select"> }) {
     setCloseFormOpen(true);
   };
 
-  const finalizeOrder = (form: OrderFormInput) => {
+  const finalizeOrder = async (form: OrderFormInput) => {
     if (savingRef.current) return; // prevent duplicate submissions
     savingRef.current = true;
     setSaving(true);
-    const counter = store.counter + 1;
     const preset = bundles.find((b) => b.id === activePreset);
-    const order = buildOrder(
+    // Financials are computed client-side exactly as before; the number/id are
+    // assigned by the database (see create_public_order).
+    const draft = buildOrder(
       form,
       activePreset ?? "custom",
       preset?.name ?? t.customBundle,
@@ -169,36 +191,66 @@ export default function NfcApp({ mode }: { mode: Exclude<AppMode, "select"> }) {
       products,
       costs,
       viewSettings,
-      counter,
+      store.counter + 1,
       prices
     );
-    // Hold the "sending" state briefly so the submit feels acknowledged
-    // and a second click cannot land before the view switches.
-    submitTimer.current = setTimeout(() => {
-      persist({ ...store, counter, orders: [...store.orders, order] });
-      setCloseFormOpen(false);
+    const res = await createPublicOrder(draft);
+    savingRef.current = false;
+    if (!res.ok) {
       setSaving(false);
-      setClientOrderId(order.id);
-      setClientView("saved");
-      // The receipt page opens first; the toast confirms it there for ~2s.
-      showToast(t.orderSavedSuccess, 2000);
-    }, 1000);
+      reportError(res.error);
+      return; // keep the form open so the customer can retry
+    }
+    const saved: OrderSnapshot = {
+      ...draft,
+      id: res.created.id,
+      number: res.created.number,
+      createdAt: res.created.createdAt || draft.createdAt,
+      updatedAt: res.created.createdAt || draft.updatedAt,
+    };
+    setCloseFormOpen(false);
+    setSaving(false);
+    setClientReceipt(saved);
+    setClientView("saved");
+    // The receipt page opens first; the toast confirms it there for ~2s.
+    showToast(t.orderSavedSuccess, 2000);
   };
 
-  const updateOrder = (next: OrderSnapshot) =>
-    persist({ ...store, orders: store.orders.map((o) => (o.id === next.id ? next : o)) });
+  // Optimistic: update the UI immediately (keeps the status-tracker animation
+  // instant), then persist. On failure, roll back and report.
+  const updateOrder = async (next: OrderSnapshot) => {
+    const prev = store.orders;
+    replaceInStore(next);
+    const res = await updateOrderRemote(next);
+    if (!res.ok) {
+      setStore((s) => ({ ...s, orders: prev }));
+      reportError(res.error);
+    } else {
+      replaceInStore(res.order);
+    }
+  };
 
-  const deleteOrder = (order: OrderSnapshot) => {
-    persist({ ...store, orders: store.orders.filter((o) => o.id !== order.id) });
+  const deleteOrder = async (order: OrderSnapshot) => {
+    const prev = store.orders;
+    setStore((s) => ({ ...s, orders: s.orders.filter((o) => o.id !== order.id) }));
     setCurrentOrderId(null);
     setOwnerView("orders");
+    const res = await deleteOrderRemote(order.id);
+    if (!res.ok) {
+      setStore((s) => ({ ...s, orders: prev }));
+      reportError(res.error);
+    }
   };
 
-  const duplicate = (order: OrderSnapshot) => {
-    const counter = store.counter + 1;
-    const created = duplicateOrder(order, counter);
-    persist({ ...store, counter, orders: [...store.orders, created] });
-    setCurrentOrderId(created.id);
+  const duplicate = async (order: OrderSnapshot) => {
+    const created = duplicateOrder(order, store.counter + 1);
+    const res = await adminCreateOrder(created);
+    if (!res.ok) {
+      reportError(res.error);
+      return;
+    }
+    setStore((s) => ({ ...s, orders: [...s.orders, res.order] }));
+    setCurrentOrderId(res.order.id);
     setOwnerView("detail");
     showToast(t.orderSavedSuccess);
   };
@@ -210,27 +262,39 @@ export default function NfcApp({ mode }: { mode: Exclude<AppMode, "select"> }) {
     setOwnerView("builder");
   };
 
-  const saveEditChanges = () => {
+  const saveEditChanges = async () => {
     if (!editingOrderId) return;
     const existing = store.orders.find((o) => o.id === editingOrderId);
     if (!existing) return;
     const updated = refreezeOrder(existing, selection, products, costs, settings, prices);
-    persist({ ...store, orders: store.orders.map((o) => (o.id === updated.id ? updated : o)) });
+    const prev = store.orders;
+    replaceInStore(updated);
     setEditingOrderId(null);
     setCurrentOrderId(updated.id);
     setOwnerView("detail");
+    const res = await updateOrderRemote(updated);
+    if (!res.ok) {
+      setStore((s) => ({ ...s, orders: prev }));
+      reportError(res.error);
+      return;
+    }
+    replaceInStore(res.order);
     showToast(t.orderSavedSuccess);
   };
 
-  const saveEditAsNew = () => {
+  const saveEditAsNew = async () => {
     if (!editingOrderId) return;
     const existing = store.orders.find((o) => o.id === editingOrderId);
     if (!existing) return;
-    const counter = store.counter + 1;
-    const created = duplicateOrder(refreezeOrder(existing, selection, products, costs, settings, prices), counter);
-    persist({ ...store, counter, orders: [...store.orders, created] });
+    const created = duplicateOrder(refreezeOrder(existing, selection, products, costs, settings, prices), store.counter + 1);
+    const res = await adminCreateOrder(created);
+    if (!res.ok) {
+      reportError(res.error);
+      return;
+    }
+    setStore((s) => ({ ...s, orders: [...s.orders, res.order] }));
     setEditingOrderId(null);
-    setCurrentOrderId(created.id);
+    setCurrentOrderId(res.order.id);
     setOwnerView("detail");
     showToast(t.orderSavedSuccess);
   };
@@ -248,7 +312,7 @@ export default function NfcApp({ mode }: { mode: Exclude<AppMode, "select"> }) {
 
   const importData = (file: File) => {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const obj = JSON.parse(String(reader.result));
         if (!isValidBackup(obj)) {
@@ -256,18 +320,21 @@ export default function NfcApp({ mode }: { mode: Exclude<AppMode, "select"> }) {
           return;
         }
         if (!window.confirm(t.importConfirm)) return;
+        // Settings/costs/prices/selection stay local (owner config); only the
+        // orders are restored into Supabase (destructive full replace).
         setSettings(obj.settings);
         setCosts(obj.costs);
         setPrices(obj.prices ?? {});
         setSelection(obj.selection ?? {});
         setActivePreset(null);
         const os = obj.orders;
-        const normalized: OrderStore = {
-          version: 1,
-          counter: typeof os.counter === "number" ? os.counter : os.orders.length,
-          orders: Array.isArray(os.orders) ? os.orders : [],
-        };
-        persist(normalized);
+        const orders = Array.isArray(os.orders) ? os.orders : [];
+        const res = await replaceAllOrders(orders);
+        if (!res.ok) {
+          reportError(res.error);
+          return;
+        }
+        setStore({ version: 1, counter: 0, orders: res.orders });
         showToast(t.importSuccess);
       } catch {
         window.alert(t.importInvalid);
@@ -277,7 +344,6 @@ export default function NfcApp({ mode }: { mode: Exclude<AppMode, "select"> }) {
   };
 
   const currentOrder = store.orders.find((o) => o.id === currentOrderId) ?? null;
-  const clientOrder = store.orders.find((o) => o.id === clientOrderId) ?? null;
   const editingNumber = editingOrderId ? store.orders.find((o) => o.id === editingOrderId)?.number ?? null : null;
   const presetName = bundles.find((b) => b.id === activePreset)?.name ?? t.customBundle;
 
@@ -410,9 +476,9 @@ export default function NfcApp({ mode }: { mode: Exclude<AppMode, "select"> }) {
           </>
         )}
 
-        {clientView === "saved" && clientOrder && (
+        {clientView === "saved" && clientReceipt && (
           <ClientOrderView
-            order={clientOrder}
+            order={clientReceipt}
             onBack={() => setClientView("builder")}
             backLabel={t.buildAnother}
             confirmation

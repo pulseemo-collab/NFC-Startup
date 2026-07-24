@@ -5,3 +5,13 @@
 *.log
 .DS_Store
 next-env.d.ts
+*.tsbuildinfo
+
+# Local environment / secrets — NEVER commit these.
+# .env.example is intentionally NOT ignored (it holds placeholders only).
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.production.local
+.env.test.local

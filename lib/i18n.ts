@@ -63,6 +63,8 @@ export const t = {
   closeOrder: "Mbyll porosinë",
   sendingOrder: "Duke dërguar porosinë...",
   orderSavedSuccess: "Porosia u ruajt me sukses.",
+  saveError: "Ruajtja dështoi. Provoni përsëri.",
+  loadError: "Ngarkimi i porosive dështoi.",
   orderNumber: "Numri i porosisë",
   businessName: "Emri i biznesit",
   customerName: "Emri i klientit",
