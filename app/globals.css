@@ -1,0 +1,124 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Single-theme commit: the original artifact's premium DARK palette. */
+:root {
+  color-scheme: dark;
+  --bg: #081014;
+  --surface: #111e21;
+  --surface-2: #182a2e;
+  --border: #243a40;
+  --ink: #e7f0f1;
+  --muted: #8fa5aa;
+  --faint: #5f757b;
+  --accent: #2cd0ca;
+  --accent-soft: #123634;
+  --accent-strong: #5be3dd;
+  --profit: #4ade80;
+  --profit-soft: #0f2e1c;
+  --gold: #ebb43c;
+  --warn: #f0a83c;
+  --warn-soft: #3a2a12;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 26px rgba(0, 0, 0, 0.4);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+/* Toast entry. Keeps the -translate-x-1/2 centring in the keyframes. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.toast-in {
+  animation: toast-in 180ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+/* Order status tracker. Transform/opacity/width only — never layout. */
+@keyframes step-pop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.step-pop {
+  animation: step-pop 260ms ease-out;
+}
+
+@keyframes label-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.label-in {
+  animation: label-in 200ms ease-out;
+}
+
+/* Keeps its slot so the footer never reflows; visibility flips after the fade. */
+.status-fade {
+  transition:
+    opacity 220ms ease-out,
+    transform 220ms ease-out,
+    visibility 0s;
+}
+
+.status-fade[data-hidden="true"] {
+  opacity: 0;
+  transform: scale(0.96);
+  visibility: hidden;
+  transition-delay: 0s, 0s, 220ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-in,
+  .step-pop,
+  .label-in {
+    animation: none;
+  }
+
+  .status-fade,
+  .status-fade[data-hidden="true"],
+  .status-tracker,
+  .status-tracker * {
+    transition-duration: 1ms;
+    transition-delay: 0s;
+  }
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  opacity: 0.4;
+}
