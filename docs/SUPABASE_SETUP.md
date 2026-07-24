@@ -42,11 +42,10 @@ cp .env.example .env.local
 
 ### When is the service role key required?
 
-Right now, **yes** — the owner dashboard (`/dashboard`) has no login yet, so its
-reads/writes run on the server with the service role key. Once Supabase Auth is
-added for the dashboard (see [§7](#7-authentication-phase-todo)), the dashboard
-can switch to the signed-in user's context and the service role key becomes
-optional. The public site never uses it.
+**No longer.** Owner authentication has been implemented (see
+[`AUTH_SETUP.md`](./AUTH_SETUP.md)). The dashboard now runs as the signed-in owner
+and access is enforced by RLS, so the app does not read the service role key at
+all. You may leave `SUPABASE_SERVICE_ROLE_KEY` unset. The public site never used it.
 
 ---
 
@@ -58,7 +57,8 @@ repeat for a separate staging project if you make one).
 | Order | File | What it does |
 | --- | --- | --- |
 | 1 | `supabase/migrations/0001_initial_schema.sql` | `orders` table, number sequence + triggers, and the `create_public_order` function |
-| 2 | `supabase/migrations/0002_rls_policies.sql` | Enables Row Level Security and the `authenticated` policies |
+| 2 | `supabase/migrations/0002_rls_policies.sql` | Enables Row Level Security and the base `authenticated` policies |
+| 3 | `supabase/migrations/0003_owner_auth_policies.sql` | Owner allowlist + `is_owner()`; replaces the `0002` policies with owner-scoped ones. See [`AUTH_SETUP.md`](./AUTH_SETUP.md) |
 
 ### How to run each migration (SQL Editor)
 
@@ -98,9 +98,9 @@ difference here — you are only pasting string values.
 - **`create_public_order`** (`SECURITY DEFINER`) assigns the order number and id,
   stores the order, and returns only `{ id, number, public_token, created_at }`
   — never cost/profit/margin.
-- **Owner dashboard `/dashboard`:** reads/writes through server actions
-  (`lib/data/orders.ts`) using the **service role key**, which bypasses RLS. This
-  is why it works before any login exists.
+- **Owner dashboard `/dashboard`:** protected by Supabase Auth. Reads/writes go
+  through server actions (`lib/data/orders.ts`) running as the **signed-in owner**,
+  enforced by the owner RLS policies. See [`AUTH_SETUP.md`](./AUTH_SETUP.md).
 
 ---
 
@@ -140,23 +140,15 @@ After deploying to Vercel with env vars set and migrations run on the prod proje
 
 ---
 
-## 7. Authentication phase (TODO)
+## 7. Authentication phase (DONE)
 
-The dashboard is currently unprotected (reachable by anyone who knows the
-`/dashboard` URL). Persistence is Supabase-ready for auth; what remains:
+The dashboard is now protected by Supabase Auth — see
+[`AUTH_SETUP.md`](./AUTH_SETUP.md) for the full setup, owner creation and testing.
+In short: `/dashboard` is guarded by `middleware.ts`, the data layer runs as the
+signed-in owner (RLS-enforced via migration `0003`), login lives at `/login`, and
+the `SUPABASE_SERVICE_ROLE_KEY` is no longer used by the app.
 
-1. **Enable Supabase Auth** (email magic-link or password) for the owner account.
-2. **Gate `/dashboard`** — add middleware / a server check that redirects
-   unauthenticated visitors. (Add `@supabase/ssr` for cookie-based sessions.)
-3. **Switch the data layer to the user's context:** replace
-   `getSupabaseAdminClient()` in `lib/data/orders.ts` with a request-scoped client
-   authenticated as the signed-in user. The **`authenticated` RLS policies already
-   exist** (migration `0002`), so **no schema/migration change is needed** — the
-   function signatures in `lib/data/orders.ts` stay the same.
-4. Once done, the `SUPABASE_SERVICE_ROLE_KEY` is no longer required by the
-   dashboard and can be removed.
-
-Nothing about the public order flow changes during the auth phase.
+Nothing about the public order flow changed during the auth phase.
 
 ---
 

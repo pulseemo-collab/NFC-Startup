@@ -369,6 +369,15 @@ export default function NfcApp({ mode }: { mode: Exclude<AppMode, "select"> }) {
             >
               ⚙ {t.settings}
             </button>
+            {/* Logout: server-side POST clears the Supabase session cookies. */}
+            <form action="/auth/signout" method="post">
+              <button
+                type="submit"
+                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium hover:border-accent hover:text-accent"
+              >
+                {t.logout}
+              </button>
+            </form>
           </AppHeader>
 
           {ownerView === "builder" && (

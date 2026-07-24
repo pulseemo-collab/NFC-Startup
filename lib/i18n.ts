@@ -110,6 +110,17 @@ export const t = {
   closingContact: "Do t'ju kontaktojmë së shpejti për të konfirmuar porosinë.",
   closingThanks: "Faleminderit që zgjodhët NFC Reseller!",
 
+  // authentication (owner login — private route)
+  loginTitle: "Hyni në panel",
+  loginSubtitle: "Vetëm për pronarin. Përdorni llogarinë tuaj për të vazhduar.",
+  emailLabel: "Email",
+  passwordLabel: "Fjalëkalimi",
+  loginButton: "Hyr",
+  loginLoading: "Duke hyrë...",
+  loginInvalid: "Email ose fjalëkalim i pasaktë.",
+  loginGenericError: "Hyrja dështoi. Provoni përsëri.",
+  logout: "Dil",
+
   // export / import
   exportData: "Eksporto të dhënat",
   importData: "Importo të dhënat",

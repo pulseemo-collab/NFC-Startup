@@ -1,21 +1,25 @@
 "use server";
 
-// Owner dashboard data-access layer — Server Actions running on the server with
-// the SERVICE ROLE key (bypasses RLS). The public site NEVER imports this module;
-// only the dashboard order operations do.
+// Owner dashboard data-access layer — Server Actions running on the server as the
+// SIGNED-IN OWNER (request-scoped, cookie-based client). Every query is subject to
+// Row Level Security: the `owner ... orders` policies in
+// supabase/migrations/0003_owner_auth_policies.sql only grant access when
+// is_owner() is true, so the database itself enforces access — not just the
+// hidden /dashboard route. The public site NEVER imports this module.
+//
+// Defense in depth: requireOwner() below rejects any caller that is not an
+// authenticated, allowlisted owner BEFORE a query runs, with a clear message.
+// Even if that check were bypassed, RLS would still deny the rows.
 //
 // Every function returns a plain serializable result and never throws across the
-// server/client boundary: a missing-config or database error comes back as
+// server/client boundary: an auth, missing-config or database error comes back as
 // { ok: false, error } so the UI can surface it cleanly (and never lose orders
-// silently). See docs/SUPABASE_SETUP.md.
-//
-// FUTURE AUTH: when Supabase Auth protects /dashboard, swap getSupabaseAdminClient()
-// for a request-scoped client using the signed-in user, and the `authenticated`
-// RLS policies in 0002 take over. The function signatures below do not change.
+// silently). See docs/AUTH_SETUP.md and docs/SUPABASE_SETUP.md.
 
 import type { OrderSnapshot, OrderStatus } from "@/types";
 import type { OrdersResult, OrderResult, MutationResult, StatsResult, DashboardStats } from "@/lib/data/types";
-import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Keep this list in sync with the columns in 0001_initial_schema.sql.
 const COLUMNS =
@@ -106,10 +110,33 @@ function fail(prefix: string, error: unknown): { ok: false; error: string } {
   return { ok: false, error: `${prefix}: ${msg}` };
 }
 
+/**
+ * Gate every dashboard operation behind a valid, allowlisted owner session.
+ * Returns the request-scoped (RLS-bound) client on success, or a clear error.
+ */
+async function requireOwner(): Promise<{ ok: true; supabase: SupabaseClient } | { ok: false; error: string }> {
+  const supabase = createSupabaseServerClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return { ok: false, error: "Not authenticated: no active session." };
+  }
+  // Owner allowlist check (is_owner() reads app_owners; see migration 0003).
+  // RLS would deny the rows anyway, but this yields a precise message.
+  const { data: isOwner, error: ownerError } = await supabase.rpc("is_owner");
+  if (ownerError) return { ok: false, error: `Authorization check failed: ${ownerError.message}` };
+  if (!isOwner) return { ok: false, error: "Not authorized: this account is not an owner." };
+  return { ok: true, supabase };
+}
+
 /** All orders, newest first. Dashboard-only (returns private fields). */
 export async function getOrders(): Promise<OrdersResult> {
   try {
-    const supabase = getSupabaseAdminClient();
+    const gate = await requireOwner();
+    if (!gate.ok) return fail("Load failed", gate.error);
+    const { supabase } = gate;
     const { data, error } = await supabase
       .from("orders")
       .select(COLUMNS)
@@ -124,7 +151,9 @@ export async function getOrders(): Promise<OrdersResult> {
 /** Insert an owner-created order (duplicate / save-as-new). DB assigns id + number. */
 export async function adminCreateOrder(order: OrderSnapshot): Promise<OrderResult> {
   try {
-    const supabase = getSupabaseAdminClient();
+    const gate = await requireOwner();
+    if (!gate.ok) return fail("Create failed", gate.error);
+    const { supabase } = gate;
     const { data, error } = await supabase
       .from("orders")
       .insert(toRow(order, { preserveNumber: false }))
@@ -140,7 +169,9 @@ export async function adminCreateOrder(order: OrderSnapshot): Promise<OrderResul
 /** Full update of an existing order (status advance, notes, or re-frozen edit). */
 export async function updateOrder(order: OrderSnapshot): Promise<OrderResult> {
   try {
-    const supabase = getSupabaseAdminClient();
+    const gate = await requireOwner();
+    if (!gate.ok) return fail("Save failed", gate.error);
+    const { supabase } = gate;
     const { data, error } = await supabase
       .from("orders")
       .update(toRow(order, { preserveNumber: false }))
@@ -157,7 +188,9 @@ export async function updateOrder(order: OrderSnapshot): Promise<OrderResult> {
 /** Lightweight status-only update (kept for API completeness / future use). */
 export async function updateOrderStatus(id: string, status: OrderStatus): Promise<OrderResult> {
   try {
-    const supabase = getSupabaseAdminClient();
+    const gate = await requireOwner();
+    if (!gate.ok) return fail("Save failed", gate.error);
+    const { supabase } = gate;
     const { data, error } = await supabase
       .from("orders")
       .update({ status })
@@ -173,7 +206,9 @@ export async function updateOrderStatus(id: string, status: OrderStatus): Promis
 
 export async function deleteOrder(id: string): Promise<MutationResult> {
   try {
-    const supabase = getSupabaseAdminClient();
+    const gate = await requireOwner();
+    if (!gate.ok) return fail("Delete failed", gate.error);
+    const { supabase } = gate;
     const { error } = await supabase.from("orders").delete().eq("id", id);
     if (error) return fail("Delete failed", error);
     return { ok: true };
@@ -189,7 +224,9 @@ export async function deleteOrder(id: string): Promise<MutationResult> {
  */
 export async function replaceAllOrders(orders: OrderSnapshot[]): Promise<OrdersResult> {
   try {
-    const supabase = getSupabaseAdminClient();
+    const gate = await requireOwner();
+    if (!gate.ok) return fail("Import failed", gate.error);
+    const { supabase } = gate;
 
     // Clear existing rows (guard: match any non-null id => all rows).
     const { error: delError } = await supabase.from("orders").delete().not("id", "is", null);
@@ -213,7 +250,9 @@ export async function replaceAllOrders(orders: OrderSnapshot[]): Promise<OrdersR
 /** Aggregate totals (BASE currency) for a future dashboard summary. */
 export async function getDashboardStats(): Promise<StatsResult> {
   try {
-    const supabase = getSupabaseAdminClient();
+    const gate = await requireOwner();
+    if (!gate.ok) return fail("Stats failed", gate.error);
+    const { supabase } = gate;
     const { data, error } = await supabase.from("orders").select("final_price, total_cost, profit");
     if (error) return fail("Stats failed", error);
     const rows = (data ?? []) as unknown as Row[];
