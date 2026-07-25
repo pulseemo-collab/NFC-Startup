@@ -41,7 +41,7 @@ import {
 } from "@/lib/data/owner-catalog";
 import { recommendPrice, type PriceOverrides } from "@/lib/pricing";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
-import { t } from "@/lib/i18n";
+import { t, NEXT_STATUS } from "@/lib/i18n";
 import type { OwnerProduct, OwnerProductPatch } from "@/lib/data/catalog-types";
 import DashboardHeader, { type OwnerNav } from "@/components/dashboard/DashboardHeader";
 import ProductCatalog from "@/components/ProductCatalog";
@@ -494,6 +494,13 @@ export default function NfcApp() {
     }
   };
 
+  /** Advance an order to its next workflow status (New → Ready → Delivered). */
+  const advanceOrder = (order: OrderSnapshot) => {
+    const next = NEXT_STATUS[order.status];
+    if (!next) return;
+    updateOrder({ ...order, status: next, updatedAt: new Date().toISOString() });
+  };
+
   const deleteOrder = async (order: OrderSnapshot) => {
     const prev = store.orders;
     setStore((s) => ({ ...s, orders: s.orders.filter((o) => o.id !== order.id) }));
@@ -720,6 +727,7 @@ export default function NfcApp() {
             }}
             onExport={exportData}
             onImportFile={importData}
+            onAdvance={advanceOrder}
           />
         )}
 
