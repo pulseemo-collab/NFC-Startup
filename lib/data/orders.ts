@@ -19,57 +19,13 @@
 import type { OrderSnapshot, OrderStatus } from "@/types";
 import type { OrdersResult, OrderResult, MutationResult, StatsResult, DashboardStats } from "@/lib/data/types";
 import { requireOwner } from "@/lib/data/owner-guard";
+import { type Row, num, rowToSnapshot } from "@/lib/data/order-mapper";
 
 // Keep this list in sync with the columns in 0001_initial_schema.sql.
 const COLUMNS =
   "id, public_token, number, created_at, updated_at, currency, business_type, business_type_label, " +
   "business_name, customer_name, phone, address, customer_notes, owner_notes, status, payment_status, " +
   "amount_paid, lines, separate_price, bundle_discount_pct, final_price, total_cost, profit, margin, saved";
-
-// A loose row shape; Supabase returns snake_case columns.
-type Row = Record<string, unknown>;
-
-function num(v: unknown): number {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-function str(v: unknown): string {
-  return typeof v === "string" ? v : v == null ? "" : String(v);
-}
-function optStr(v: unknown): string | undefined {
-  const s = v == null ? "" : String(v);
-  return s === "" ? undefined : s;
-}
-
-/** DB row -> frontend OrderSnapshot. */
-function rowToSnapshot(r: Row): OrderSnapshot {
-  return {
-    id: str(r.id),
-    number: str(r.number),
-    createdAt: str(r.created_at),
-    updatedAt: str(r.updated_at),
-    currency: str(r.currency),
-    businessType: str(r.business_type),
-    businessTypeLabel: str(r.business_type_label),
-    businessName: str(r.business_name),
-    customerName: optStr(r.customer_name),
-    phone: optStr(r.phone),
-    address: optStr(r.address),
-    customerNotes: optStr(r.customer_notes),
-    ownerNotes: optStr(r.owner_notes),
-    status: str(r.status) as OrderStatus,
-    paymentStatus: str(r.payment_status) as OrderSnapshot["paymentStatus"],
-    amountPaid: num(r.amount_paid),
-    lines: Array.isArray(r.lines) ? (r.lines as OrderSnapshot["lines"]) : [],
-    separatePrice: num(r.separate_price),
-    bundleDiscountPct: num(r.bundle_discount_pct),
-    finalPrice: num(r.final_price),
-    totalCost: num(r.total_cost),
-    profit: num(r.profit),
-    margin: num(r.margin),
-    saved: num(r.saved),
-  };
-}
 
 /** Frontend snapshot -> DB columns. `preserveNumber` keeps the original NFC-#### on import. */
 function toRow(o: OrderSnapshot, opts: { preserveNumber: boolean }) {

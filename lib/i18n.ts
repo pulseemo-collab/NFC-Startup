@@ -16,6 +16,7 @@ export const t = {
   notifEmpty: "Ende pa njoftime.",
   notifSettingsChanged: "Cilësimet u përditësuan",
   notifSettingsBody: "Cilësimet e panelit u ndryshuan.",
+  realtimeNewOrder: "Porosi e re u pranua.",
 
   // catalog
   businessType: "Lloji i biznesit",

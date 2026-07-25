@@ -5,37 +5,18 @@
 // public site never imports this module.
 
 import type {
-  AppNotification,
   NewNotification,
   NotificationsResult,
   NotificationMutation,
-  NotificationType,
 } from "@/lib/data/notification-types";
 import { requireOwner } from "@/lib/data/owner-guard";
-
-type Row = Record<string, unknown>;
+import { type Row, rowToNotification } from "@/lib/data/notification-mapper";
 
 const COLUMNS = "id, type, title, body, read, dedupe_key, meta, created_at";
 
-function str(v: unknown): string {
-  return typeof v === "string" ? v : v == null ? "" : String(v);
-}
 function fail(prefix: string, error: unknown): { ok: false; error: string } {
   const msg = error instanceof Error ? error.message : String(error);
   return { ok: false, error: `${prefix}: ${msg}` };
-}
-
-function rowToNotification(r: Row): AppNotification {
-  return {
-    id: str(r.id),
-    type: str(r.type) as NotificationType,
-    title: str(r.title),
-    body: str(r.body),
-    read: r.read === true,
-    dedupeKey: r.dedupe_key == null ? null : str(r.dedupe_key),
-    meta: (r.meta && typeof r.meta === "object" ? (r.meta as Record<string, unknown>) : {}),
-    createdAt: str(r.created_at),
-  };
 }
 
 /** Newest notifications first. Dashboard-only. */

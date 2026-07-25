@@ -65,6 +65,7 @@ import {
 } from "@/lib/data/notifications";
 import { computeAdvisoryNotifications } from "@/lib/notifications-advisory";
 import type { AppNotification } from "@/lib/data/notification-types";
+import { useOwnerRealtime } from "@/lib/realtime/useOwnerRealtime";
 
 const DEFAULT_SETTINGS: Settings = {
   currency: DEFAULT_CURRENCY,
@@ -351,6 +352,34 @@ export default function NfcApp() {
     }
   };
 
+  // ---- Realtime: reflect public/other-session order + notification changes live ----
+  // Enabled once hydrated (session known). RLS-enforced; refetches on reconnect.
+  useOwnerRealtime(hydrated, {
+    onOrderInsert: (o) => {
+      const known = store.orders.some((x) => x.id === o.id);
+      mergeOrder(o);
+      if (!known) showToast(t.realtimeNewOrder);
+    },
+    onOrderUpdate: (o) => mergeOrder(o),
+    onOrderDelete: (id) => {
+      setStore((s) => ({ ...s, orders: s.orders.filter((x) => x.id !== id) }));
+      // If the order being viewed was removed elsewhere, fall back to the list.
+      if (currentOrderId === id && (ownerView === "detail" || ownerView === "clientPreview")) {
+        setOwnerView("orders");
+      }
+    },
+    onNotificationInsert: (n) =>
+      setNotifications((list) => (list.some((x) => x.id === n.id) ? list : [n, ...list])),
+    onNotificationUpdate: (n) => setNotifications((list) => list.map((x) => (x.id === n.id ? n : x))),
+    onNotificationDelete: (id) => setNotifications((list) => list.filter((x) => x.id !== id)),
+    onReconnect: async () => {
+      // Authoritative refresh so no events were missed during the disconnect.
+      const [o, nn] = await Promise.all([getOrders(), getNotifications()]);
+      if (o.ok) setStore((s) => ({ ...s, orders: o.orders }));
+      if (nn.ok) setNotifications(nn.notifications);
+    },
+  });
+
   // ---- product management (Products view) — persist to Supabase (owner session) ----
   const pmHandlers: ProductManagerHandlers = {
     onCreate: async (patch) => {
@@ -445,6 +474,14 @@ export default function NfcApp() {
   const replaceInStore = (o: OrderSnapshot) =>
     setStore((s) => ({ ...s, orders: s.orders.map((x) => (x.id === o.id ? o : x)) }));
 
+  /** Insert-or-replace by id, keeping newest-first order. Safe against Realtime
+   *  echoes of an order the owner just created locally (dedupe by id). */
+  const mergeOrder = (o: OrderSnapshot) =>
+    setStore((s) => {
+      const others = s.orders.filter((x) => x.id !== o.id);
+      return { ...s, orders: [...others, o].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) };
+    });
+
   const updateOrder = async (next: OrderSnapshot) => {
     const prev = store.orders;
     replaceInStore(next);
@@ -476,7 +513,7 @@ export default function NfcApp() {
       reportError(res.error);
       return;
     }
-    setStore((s) => ({ ...s, orders: [...s.orders, res.order] }));
+    mergeOrder(res.order);
     setCurrentOrderId(res.order.id);
     setOwnerView("detail");
     showToast(t.orderSavedSuccess);
@@ -526,7 +563,7 @@ export default function NfcApp() {
       reportError(res.error);
       return;
     }
-    setStore((s) => ({ ...s, orders: [...s.orders, res.order] }));
+    mergeOrder(res.order);
     setEditingOrderId(null);
     setCurrentOrderId(res.order.id);
     setOwnerView("detail");
