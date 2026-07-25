@@ -102,10 +102,97 @@ body {
   transition-delay: 0s, 0s, 220ms;
 }
 
+/* Dashboard card mount — subtle rise+fade, staggered via inline delay. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise-in {
+  animation: rise-in 260ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+/* Loading skeleton shimmer. Background-position only — never layout. */
+@keyframes shimmer {
+  0% {
+    background-position: -160% 0;
+  }
+  100% {
+    background-position: 160% 0;
+  }
+}
+
+.skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--surface-2) 0%,
+    var(--border) 50%,
+    var(--surface-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+
+/* Count-up / value change flash for animated totals. */
+@keyframes value-flash {
+  from {
+    color: var(--accent-strong);
+  }
+  to {
+    color: inherit;
+  }
+}
+
+.value-flash {
+  animation: value-flash 500ms ease-out;
+}
+
+/* Analytics chart: bars/area grow up from the baseline on mount. */
+@keyframes chart-grow {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+.chart-grow {
+  transform-origin: bottom;
+  animation: chart-grow 420ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+/* Consistent, visible keyboard focus for interactive elements (accessibility).
+   Mouse users don't see it (:focus-visible only). */
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+[role="button"]:focus-visible,
+[role="menuitem"]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 0.4rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .toast-in,
   .step-pop,
-  .label-in {
+  .label-in,
+  .rise-in,
+  .skeleton,
+  .value-flash,
+  .chart-grow {
     animation: none;
   }
 

@@ -103,7 +103,10 @@ export default function BundleBuilder({
                       +
                     </button>
                   </div>
-                  <div className="tnum w-16 text-right text-sm font-semibold text-profit">
+                  <div
+                    key={line.unitPrice * line.qty}
+                    className="value-flash tnum w-16 text-right text-sm font-semibold text-profit"
+                  >
                     {formatMoney(line.unitPrice * line.qty, settings)}
                   </div>
                 </li>
@@ -123,13 +126,18 @@ export default function BundleBuilder({
                       <span className="text-[0.82rem] font-bold uppercase tracking-[0.06em] text-profit">
                         {t.yourProfit}
                       </span>
-                      <span className="tnum text-[1.55rem] font-extrabold leading-none tracking-tight text-profit">
+                      <span
+                        key={result.profit}
+                        className="value-flash tnum text-[1.55rem] font-extrabold leading-none tracking-tight text-profit"
+                      >
                         {formatMoney(result.profit, settings)}
                       </span>
                     </div>
                     <div className="mt-2.5 flex items-center justify-between text-[0.82rem] text-muted">
                       <span>{t.margin}</span>
-                      <b className="tnum text-profit">{marginPct.toFixed(1)}%</b>
+                      <b key={marginPct.toFixed(1)} className="value-flash tnum text-profit">
+                        {marginPct.toFixed(1)}%
+                      </b>
                     </div>
                     <div className="mt-1.5 h-[7px] overflow-hidden rounded-full bg-surface-2">
                       <div
@@ -140,7 +148,7 @@ export default function BundleBuilder({
                   </div>
                   <div className="mt-2.5 flex items-center justify-between text-sm">
                     <span className="text-muted">{t.customerSaves}</span>
-                    <b className="tnum text-profit">
+                    <b key={result.saved} className="value-flash tnum text-profit">
                       {formatMoney(result.saved, settings)} ({Math.round(result.discountPct * 100)}%)
                     </b>
                   </div>
@@ -159,7 +167,10 @@ export default function BundleBuilder({
                     <span className="text-[0.82rem] font-bold uppercase tracking-[0.06em] text-accent">
                       {t.bundlePrice}
                     </span>
-                    <span className="tnum text-[1.55rem] font-extrabold leading-none tracking-tight text-accent">
+                    <span
+                      key={result.price}
+                      className="value-flash tnum text-[1.55rem] font-extrabold leading-none tracking-tight text-accent"
+                    >
                       {formatMoney(result.price, settings)}
                     </span>
                   </div>

@@ -66,7 +66,16 @@ Run these in the Supabase **SQL Editor**, in order. 0001–0003 are already appl
 | 4 | `supabase/migrations/0004_products_and_settings.sql` | `products` + `app_settings` tables, triggers, indexes |
 | 5 | `supabase/migrations/0005_secure_pricing_functions.sql` | server pricing + public read functions; **drops** the old `create_public_order` |
 | 6 | `supabase/migrations/0006_product_rls_policies.sql` | RLS: owner-only tables, no anon direct access |
+| 7 | `supabase/migrations/0007_product_status.sql` | adds product `status` (active/draft/archived) for the dashboard product manager |
+| 8 | `supabase/migrations/0008_settings_business_identity.sql` | adds `business_name` + `logo_url` to owner settings (dashboard/receipt branding) |
 | seed | `supabase/seed/seed_products_and_settings.sql` | **run once**, manually, to load the current catalog + settings |
+
+> **Required for Owner Experience 2.0:** `0007` (product `status`) and `0008`
+> (settings `business_name`/`logo_url`) must both be applied before the updated
+> dashboard code is deployed — the owner catalog/settings queries select those
+> columns, so loading fails without them. Both are additive, owner-only, and do
+> not change the public path (products still expose `is_active`, kept in sync:
+> active ⇒ visible; settings additions are branding only, not pricing).
 
 Money is stored as PostgreSQL `numeric` in EUR (base currency), consistent with the
 orders table. No floating-point money.

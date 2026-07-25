@@ -46,8 +46,13 @@ export default function PricingExplanation({
           Tregu {formatMoney(product.market.min, settings)}–{formatMoney(product.market.max, settings)}
         </span>
       </div>
-      <p className="mt-1.5 text-xs leading-snug text-muted">{result.reason}</p>
-      <p className="mt-1 text-[0.68rem] leading-snug text-faint">{product.note}</p>
+      <details className="mt-1.5">
+        <summary className="cursor-pointer list-none text-[0.7rem] font-medium text-accent hover:text-accent-strong">
+          {t.whyThisPrice}
+        </summary>
+        <p className="mt-1.5 text-xs leading-snug text-muted">{result.reason}</p>
+        {product.note && <p className="mt-1 text-[0.68rem] leading-snug text-faint">{product.note}</p>}
+      </details>
     </div>
   );
 }

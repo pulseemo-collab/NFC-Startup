@@ -97,6 +97,9 @@ export type PublicQuoteResult = { ok: true; quote: PublicQuote } | { ok: false; 
 // -------------------------------- OWNER -----------------------------------
 // PRIVATE — only import inside the authenticated /dashboard tree.
 
+/** Owner-facing lifecycle. `active` == publicly visible (is_active true). */
+export type ProductStatus = "active" | "draft" | "archived";
+
 export interface OwnerProduct {
   slug: string;
   name: string;
@@ -110,6 +113,7 @@ export interface OwnerProduct {
   market: { min: number; recommended: number; premium: number; max: number }; // PRIVATE
   ladder: number[]; // PRIVATE
   note: string; // PRIVATE
+  status: ProductStatus;
   isActive: boolean;
   sortOrder: number;
 }
@@ -126,6 +130,7 @@ export interface OwnerProductPatch {
   market?: { min: number; recommended: number; premium: number; max: number };
   ladder?: number[];
   note?: string;
+  status?: ProductStatus;
   isActive?: boolean;
   sortOrder?: number;
 }
@@ -135,6 +140,8 @@ export interface OwnerSettings {
   minMargin: number;
   minProfit: number;
   bundleDiscount: number;
+  businessName: string;
+  logoUrl: string;
 }
 
 export type OwnerProductsResult = { ok: true; products: OwnerProduct[] } | { ok: false; error: string };

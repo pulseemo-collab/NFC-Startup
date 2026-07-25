@@ -30,14 +30,20 @@ import {
 import {
   getOwnerProducts,
   updateProduct,
+  createProduct,
+  deleteProduct,
+  duplicateProduct,
+  reorderProducts,
+  bulkUpdateProducts,
+  bulkDeleteProducts,
   getOwnerSettings,
   updateOwnerSettings,
 } from "@/lib/data/owner-catalog";
 import { recommendPrice, type PriceOverrides } from "@/lib/pricing";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
 import { t } from "@/lib/i18n";
-import type { OwnerProduct } from "@/lib/data/catalog-types";
-import AppHeader from "@/components/AppHeader";
+import type { OwnerProduct, OwnerProductPatch } from "@/lib/data/catalog-types";
+import DashboardHeader, { type OwnerNav } from "@/components/dashboard/DashboardHeader";
 import ProductCatalog from "@/components/ProductCatalog";
 import BundleBuilder from "@/components/BundleBuilder";
 import BusinessPresets from "@/components/BusinessPresets";
@@ -45,16 +51,32 @@ import SettingsPanel from "@/components/SettingsPanel";
 import OrderList from "@/components/OrderList";
 import OrderDetail from "@/components/OrderDetail";
 import ClientOrderView from "@/components/ClientOrderView";
+import DashboardHome from "@/components/dashboard/DashboardHome";
+import AnalyticsView from "@/components/dashboard/AnalyticsView";
+import ProductManager, { type ProductManagerHandlers } from "@/components/dashboard/ProductManager";
+import GlobalSearch from "@/components/dashboard/GlobalSearch";
+import NotificationCenter from "@/components/dashboard/NotificationCenter";
+import {
+  getNotifications,
+  createNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  deleteNotification as deleteNotificationRemote,
+} from "@/lib/data/notifications";
+import { computeAdvisoryNotifications } from "@/lib/notifications-advisory";
+import type { AppNotification } from "@/lib/data/notification-types";
 
 const DEFAULT_SETTINGS: Settings = {
   currency: DEFAULT_CURRENCY,
   minMargin: 0.7,
   minProfit: 3,
   bundleDiscount: 0.1,
+  businessName: "",
+  logoUrl: "",
 };
 const defaultSel = () => ({ selection: { ...bundles[0].kit }, activePreset: bundles[0].id as string | null });
 
-type OwnerView = "builder" | "orders" | "detail" | "clientPreview";
+type OwnerView = "home" | "analytics" | "catalog" | "builder" | "orders" | "detail" | "clientPreview";
 
 /** OwnerProduct (DB shape) -> the Product shape the builder components expect. */
 function toProduct(op: OwnerProduct): Product {
@@ -83,9 +105,16 @@ export default function NfcApp() {
   const [selection, setSelection] = useState<Record<string, number>>(() => ({ ...bundles[0].kit }));
   const [activePreset, setActivePreset] = useState<string | null>(bundles[0].id);
   const [store, setStore] = useState<OrderStore>({ version: 1, counter: 0, orders: [] });
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const settingsNotifiedRef = useRef<string>("");
 
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [ownerView, setOwnerView] = useState<OwnerView>("builder");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [ownerView, setOwnerView] = useState<OwnerView>("home");
+  // Deep-link seeds for search results (remounted via seedNonce to re-apply).
+  const [orderQuerySeed, setOrderQuerySeed] = useState("");
+  const [catalogEditSlug, setCatalogEditSlug] = useState<string | null>(null);
+  const [seedNonce, setSeedNonce] = useState(0);
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -93,7 +122,9 @@ export default function NfcApp() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Derive the builder's view of the catalog from the authoritative rows.
-  const products = useMemo(() => ownerProducts.map(toProduct), [ownerProducts]);
+  // Only ACTIVE products are sellable in the builder; drafts/archived are hidden
+  // here but remain fully manageable in the Products view.
+  const products = useMemo(() => ownerProducts.filter((op) => op.isActive).map(toProduct), [ownerProducts]);
   const costs = useMemo(
     () => Object.fromEntries(ownerProducts.map((op) => [op.slug, op.supplierCostEur])),
     [ownerProducts]
@@ -115,28 +146,45 @@ export default function NfcApp() {
     setSelection(sel.selection ?? { ...bundles[0].kit });
     setActivePreset(sel.activePreset ?? bundles[0].id);
 
-    Promise.all([getOwnerProducts(), getOwnerSettings(), getOrders()]).then(([pRes, sRes, oRes]) => {
-      if (sRes.ok) {
-        setSettings({
-          currency: sRes.settings.currency,
-          minMargin: sRes.settings.minMargin,
-          minProfit: sRes.settings.minProfit,
-          bundleDiscount: sRes.settings.bundleDiscount,
-        });
+    Promise.all([getOwnerProducts(), getOwnerSettings(), getOrders(), getNotifications()]).then(
+      async ([pRes, sRes, oRes, nRes]) => {
+        const nextSettings: Settings = sRes.ok
+          ? {
+              currency: sRes.settings.currency,
+              minMargin: sRes.settings.minMargin,
+              minProfit: sRes.settings.minProfit,
+              bundleDiscount: sRes.settings.bundleDiscount,
+              businessName: sRes.settings.businessName,
+              logoUrl: sRes.settings.logoUrl,
+            }
+          : DEFAULT_SETTINGS;
+        if (sRes.ok) setSettings(nextSettings);
+        if (pRes.ok) setOwnerProducts(pRes.products);
+        else {
+          console.error("[owner] products:", pRes.error);
+          setLoadFailed(true);
+          showToast(t.productsLoadError);
+        }
+        if (oRes.ok) setStore({ version: 1, counter: 0, orders: oRes.orders });
+        else {
+          console.error("[owner] orders:", oRes.error);
+          showToast(t.loadError);
+        }
+
+        // Notifications: start from what's stored, then sync advisory items
+        // (deduped server-side) derived from the current catalog.
+        let notifs = nRes.ok ? nRes.notifications : [];
+        if (pRes.ok && sRes.ok) {
+          const advisories = computeAdvisoryNotifications(pRes.products, nextSettings);
+          if (advisories.length > 0) {
+            const cRes = await createNotifications(advisories);
+            if (cRes.ok) notifs = cRes.notifications;
+          }
+        }
+        setNotifications(notifs);
+        setHydrated(true);
       }
-      if (pRes.ok) setOwnerProducts(pRes.products);
-      else {
-        console.error("[owner] products:", pRes.error);
-        setLoadFailed(true);
-        showToast(t.productsLoadError);
-      }
-      if (oRes.ok) setStore({ version: 1, counter: 0, orders: oRes.orders });
-      else {
-        console.error("[owner] orders:", oRes.error);
-        showToast(t.loadError);
-      }
-      setHydrated(true);
-    });
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -144,6 +192,21 @@ export default function NfcApp() {
   useEffect(() => {
     if (hydrated) saveJSON(KEYS.selection, { selection, activePreset });
   }, [selection, activePreset, hydrated]);
+
+  // Global search shortcut: Ctrl/Cmd+K anywhere, or "/" when not typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      } else if (e.key === "/" && !isTypingTarget(e.target)) {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const showToast = (msg: string, ms = 2800) => {
     setToast(msg);
@@ -154,6 +217,64 @@ export default function NfcApp() {
   const reportError = (detail: string) => {
     console.error("[owner]", detail);
     showToast(t.saveError);
+  };
+
+  // ---- navigation (also used by global search deep-links) ----
+  const goOrders = (q = "") => {
+    setOrderQuerySeed(q);
+    setSeedNonce((n) => n + 1);
+    setOwnerView("orders");
+  };
+  const goCatalog = (editSlug: string | null = null) => {
+    setCatalogEditSlug(editSlug);
+    setSeedNonce((n) => n + 1);
+    setOwnerView("catalog");
+  };
+  const openOrderById = (id: string) => {
+    setCurrentOrderId(id);
+    setOwnerView("detail");
+    setSearchOpen(false);
+  };
+  const navigate = (view: OwnerNav) => {
+    if (view === "catalog") goCatalog();
+    else if (view === "orders") goOrders();
+    else setOwnerView(view);
+  };
+
+  // ---- notifications ----
+  const markAllRead = async () => {
+    setNotifications((list) => list.map((n) => ({ ...n, read: true })));
+    const res = await markAllNotificationsRead();
+    if (!res.ok) reportError(res.error);
+  };
+  const removeNotification = async (id: string) => {
+    const prev = notifications;
+    setNotifications((list) => list.filter((n) => n.id !== id));
+    const res = await deleteNotificationRemote(id);
+    if (!res.ok) {
+      setNotifications(prev);
+      reportError(res.error);
+    }
+  };
+  const openNotification = (n: AppNotification) => {
+    if (!n.read) {
+      setNotifications((list) => list.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
+      markNotificationRead(n.id).then((r) => !r.ok && console.error("[owner]", r.error));
+    }
+    const slug = typeof n.meta?.slug === "string" ? n.meta.slug : null;
+    const orderId = typeof n.meta?.orderId === "string" ? n.meta.orderId : null;
+    if (n.type === "new_order") {
+      if (orderId && store.orders.some((o) => o.id === orderId)) {
+        setCurrentOrderId(orderId);
+        setOwnerView("detail");
+      } else {
+        goOrders();
+      }
+    } else if (n.type === "settings_changed") {
+      setSettingsOpen(true);
+    } else if (slug) {
+      goCatalog(slug);
+    }
   };
 
   const productBySlug = (slug: string): Product | null => {
@@ -207,11 +328,93 @@ export default function NfcApp() {
       minMargin: next.minMargin,
       minProfit: next.minProfit,
       bundleDiscount: next.bundleDiscount,
+      businessName: next.businessName ?? "",
+      logoUrl: next.logoUrl ?? "",
     });
     if (!res.ok) {
       setSettings(prev);
       reportError(res.error);
+      return;
     }
+    // Raise a single "settings changed" notification per day (deduped server-side).
+    const today = new Date().toISOString().slice(0, 10);
+    if (settingsNotifiedRef.current !== today) {
+      settingsNotifiedRef.current = today;
+      createNotifications([
+        {
+          type: "settings_changed",
+          title: t.notifSettingsChanged,
+          body: t.notifSettingsBody,
+          dedupeKey: `settings:${today}`,
+        },
+      ]).then((r) => r.ok && setNotifications(r.notifications));
+    }
+  };
+
+  // ---- product management (Products view) — persist to Supabase (owner session) ----
+  const pmHandlers: ProductManagerHandlers = {
+    onCreate: async (patch) => {
+      const res = await createProduct(patch);
+      if (!res.ok) return reportError(res.error), false;
+      setOwnerProducts((list) => [...list, res.product]);
+      showToast(t.pmSaved);
+      return true;
+    },
+    onUpdate: async (slug, patch) => {
+      const res = await updateProduct(slug, patch);
+      if (!res.ok) return reportError(res.error), false;
+      setOwnerProducts((list) => list.map((op) => (op.slug === slug ? res.product : op)));
+      return true;
+    },
+    onDuplicate: async (slug) => {
+      const res = await duplicateProduct(slug);
+      if (!res.ok) return reportError(res.error), false;
+      setOwnerProducts((list) => [...list, res.product]);
+      showToast(t.pmSaved);
+      return true;
+    },
+    onDelete: async (slug) => {
+      const prev = ownerProducts;
+      setOwnerProducts((list) => list.filter((op) => op.slug !== slug));
+      const res = await deleteProduct(slug);
+      if (!res.ok) {
+        setOwnerProducts(prev);
+        return reportError(res.error), false;
+      }
+      return true;
+    },
+    onReorder: async (slugs) => {
+      const prev = ownerProducts;
+      const orderMap = new Map(slugs.map((s, i) => [s, i]));
+      setOwnerProducts((list) =>
+        [...list]
+          .map((op) => (orderMap.has(op.slug) ? { ...op, sortOrder: orderMap.get(op.slug)! } : op))
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+      );
+      const res = await reorderProducts(slugs);
+      if (!res.ok) {
+        setOwnerProducts(prev);
+        return reportError(res.error), false;
+      }
+      return true;
+    },
+    onBulkUpdate: async (slugs, patch) => {
+      const res = await bulkUpdateProducts(slugs, patch);
+      if (!res.ok) return reportError(res.error), false;
+      setOwnerProducts((list) => list.map((op) => res.products.find((r) => r.slug === op.slug) ?? op));
+      return true;
+    },
+    onBulkDelete: async (slugs) => {
+      const prev = ownerProducts;
+      const set = new Set(slugs);
+      setOwnerProducts((list) => list.filter((op) => !set.has(op.slug)));
+      const res = await bulkDeleteProducts(slugs);
+      if (!res.ok) {
+        setOwnerProducts(prev);
+        return reportError(res.error), false;
+      }
+      return true;
+    },
   };
 
   // ---- builder selection (local only) ----
@@ -372,38 +575,61 @@ export default function NfcApp() {
   const currentOrder = store.orders.find((o) => o.id === currentOrderId) ?? null;
   const editingNumber = editingOrderId ? store.orders.find((o) => o.id === editingOrderId)?.number ?? null : null;
 
-  if (!hydrated) return null;
-
   return (
     <>
       <Toast msg={toast} />
-      <main className="mx-auto max-w-6xl px-4 py-7">
-        <AppHeader subtitle={t.ownerMode}>
-          <NavBtn active={ownerView === "builder"} onClick={() => setOwnerView("builder")}>
-            {t.builder}
-          </NavBtn>
-          <NavBtn active={ownerView === "orders" || ownerView === "detail"} onClick={() => setOwnerView("orders")}>
-            {t.orders}
-          </NavBtn>
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium hover:border-accent hover:text-accent"
-          >
-            ⚙ {t.settings}
-          </button>
-          {/* Logout: server-side POST clears the Supabase session cookies. */}
-          <form action="/auth/signout" method="post">
-            <button
-              type="submit"
-              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium hover:border-accent hover:text-accent"
-            >
-              {t.logout}
-            </button>
-          </form>
-        </AppHeader>
+      <main className="mx-auto max-w-6xl px-4 py-7 pb-24 lg:pb-7">
+        <DashboardHeader
+          brandName={settings.businessName}
+          logoUrl={settings.logoUrl}
+          subtitle={t.ownerMode}
+          activeView={ownerView}
+          onNavigate={navigate}
+          onOpenSearch={() => setSearchOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          notificationSlot={
+            <NotificationCenter
+              notifications={notifications}
+              currency={settings.currency}
+              onMarkAllRead={markAllRead}
+              onOpen={openNotification}
+              onDelete={removeNotification}
+            />
+          }
+        />
 
-        {ownerView === "builder" && (
+        {!hydrated && <DashboardHome loading orders={[]} products={[]} currency={settings.currency} onNewOrder={() => {}} onViewOrders={() => {}} onOpenOrder={() => {}} />}
+
+        {hydrated && ownerView === "home" && (
+          <DashboardHome
+            orders={store.orders}
+            products={ownerProducts}
+            currency={settings.currency}
+            onNewOrder={() => setOwnerView("builder")}
+            onViewOrders={() => goOrders()}
+            onOpenOrder={(id) => {
+              setCurrentOrderId(id);
+              setOwnerView("detail");
+            }}
+            onViewAnalytics={() => setOwnerView("analytics")}
+          />
+        )}
+
+        {hydrated && ownerView === "analytics" && (
+          <AnalyticsView orders={store.orders} products={ownerProducts} currency={settings.currency} />
+        )}
+
+        {hydrated && ownerView === "catalog" && (
+          <ProductManager
+            key={`catalog-${seedNonce}`}
+            products={ownerProducts}
+            settings={settings}
+            handlers={pmHandlers}
+            initialEditSlug={catalogEditSlug}
+          />
+        )}
+
+        {hydrated && ownerView === "builder" && (
           <>
             {loadFailed && (
               <div className="mb-5 rounded-lg border border-warn bg-warn-soft px-4 py-3 text-sm text-warn">
@@ -446,9 +672,11 @@ export default function NfcApp() {
           </>
         )}
 
-        {ownerView === "orders" && (
+        {hydrated && ownerView === "orders" && (
           <OrderList
+            key={`orders-${seedNonce}`}
             orders={store.orders}
+            initialQuery={orderQuerySeed}
             onOpen={(id) => {
               setCurrentOrderId(id);
               setOwnerView("detail");
@@ -458,7 +686,7 @@ export default function NfcApp() {
           />
         )}
 
-        {ownerView === "detail" && currentOrder && (
+        {hydrated && ownerView === "detail" && currentOrder && (
           <OrderDetail
             order={currentOrder}
             onBack={() => setOwnerView("orders")}
@@ -473,14 +701,61 @@ export default function NfcApp() {
           />
         )}
 
-        {ownerView === "clientPreview" && currentOrder && (
+        {hydrated && ownerView === "clientPreview" && currentOrder && (
           <ClientOrderView order={currentOrder} onBack={() => setOwnerView("detail")} backLabel={currentOrder.number} />
         )}
 
-        <SettingsPanel settings={settings} onChange={updateSettings} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        <SettingsPanel
+          settings={settings}
+          onChange={updateSettings}
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          onExport={exportData}
+          onImportFile={importData}
+        />
       </main>
+
+      {/* Bottom tab bar — primary navigation below lg, where the header nav is hidden. */}
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-border bg-surface/95 backdrop-blur lg:hidden">
+        <MobileTab label={t.dashboardHome} icon="🏠" active={ownerView === "home"} onClick={() => setOwnerView("home")} />
+        <MobileTab label={t.analytics} icon="📊" active={ownerView === "analytics"} onClick={() => setOwnerView("analytics")} />
+        <MobileTab label={t.products} icon="📦" active={ownerView === "catalog"} onClick={() => goCatalog()} />
+        <MobileTab label={t.builder} icon="🧩" active={ownerView === "builder"} onClick={() => setOwnerView("builder")} />
+        <MobileTab
+          label={t.orders}
+          icon="🧾"
+          active={ownerView === "orders" || ownerView === "detail"}
+          onClick={() => goOrders()}
+        />
+      </nav>
+
+      {searchOpen && (
+        <GlobalSearch
+          orders={store.orders}
+          products={ownerProducts}
+          currency={settings.currency}
+          onOpenOrder={openOrderById}
+          onOpenProduct={(slug) => {
+            goCatalog(slug);
+            setSearchOpen(false);
+          }}
+          onSeedOrders={(q) => {
+            goOrders(q);
+            setSearchOpen(false);
+          }}
+          onClose={() => setSearchOpen(false)}
+        />
+      )}
     </>
   );
+}
+
+/** True when a keyboard event target is an editable field (so "/" types normally). */
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
 }
 
 function BusinessTypeSection({
@@ -499,16 +774,29 @@ function BusinessTypeSection({
   );
 }
 
-function NavBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function MobileTab({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: string;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
-        active ? "border-accent bg-accent text-white" : "border-border bg-surface text-muted hover:border-accent hover:text-accent"
+      className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[0.62rem] font-medium transition ${
+        active ? "text-accent" : "text-faint hover:text-muted"
       }`}
     >
-      {children}
+      <span className={`text-lg leading-none ${active ? "scale-110" : ""} transition-transform`} aria-hidden>
+        {icon}
+      </span>
+      <span className="truncate">{label}</span>
     </button>
   );
 }

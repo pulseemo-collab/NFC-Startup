@@ -46,6 +46,8 @@ export interface Settings {
   minMargin: number; // global default margin floor (0..1)
   minProfit: number; // global default profit floor
   bundleDiscount: number; // 0..1
+  businessName?: string; // branding — shown in the dashboard header & receipts
+  logoUrl?: string; // branding — optional logo image URL
 }
 
 export type PriceStatus = "recommended" | "raised" | "not-viable";

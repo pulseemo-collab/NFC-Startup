@@ -67,7 +67,10 @@ export default function OrderDetail({
 
       <StatusTracker status={order.status} />
 
-      {/* customer info */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Timeline order={order} />
+
+      {/* customer summary */}
       <Card title={t.customerInfo}>
         <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
           <Info k={t.businessName} v={order.businessName} />
@@ -76,17 +79,19 @@ export default function OrderDetail({
           <Info k={t.address} v={order.address ?? "—"} />
         </dl>
       </Card>
+      </div>
 
       {/* products */}
       <Card title={t.products}>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-sm">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="text-left text-[0.7rem] uppercase tracking-wide text-muted">
                 <th className="py-1.5 pr-2">{t.products}</th>
                 <th className="py-1.5 px-2 text-center">{t.quantity}</th>
                 <th className="py-1.5 px-2 text-right">{t.unitPrice}</th>
                 <th className="py-1.5 px-2 text-right">{t.myCost}</th>
+                <th className="py-1.5 px-2 text-right">{t.profit}</th>
                 <th className="py-1.5 pl-2 text-right">{t.customerTotal}</th>
               </tr>
             </thead>
@@ -97,6 +102,9 @@ export default function OrderDetail({
                   <td className="tnum py-2 px-2 text-center">{l.qty}</td>
                   <td className="tnum py-2 px-2 text-right">{formatAmount(l.unitPrice, cur)}</td>
                   <td className="tnum py-2 px-2 text-right text-muted">{formatAmount(l.unitCost, cur)}</td>
+                  <td className="tnum py-2 px-2 text-right text-profit">
+                    {formatAmount((l.unitPrice - l.unitCost) * l.qty, cur)}
+                  </td>
                   <td className="tnum py-2 pl-2 text-right font-semibold">
                     {formatAmount(l.unitPrice * l.qty, cur)}
                   </td>
@@ -118,6 +126,7 @@ export default function OrderDetail({
           <Info k={t.margin} v={`${Math.round(order.margin * 100)}%`} profit />
           <Info k={t.customerSaves} v={formatAmount(order.saved, cur)} />
         </dl>
+        <ProfitBar revenue={order.finalPrice} cost={order.totalCost} profit={order.profit} currency={cur} />
       </Card>
 
       {/* notes */}
@@ -223,6 +232,79 @@ function Connector({ filled, invisible }: { filled: boolean; invisible: boolean 
         }`}
       />
     </span>
+  );
+}
+
+/**
+ * Vertical timeline (Part 8). Derived from the order's REAL data: `createdAt` for
+ * creation and `updatedAt` for the step it currently sits on. Past/future steps
+ * are shown without a fabricated timestamp — we don't invent history we don't store.
+ */
+function Timeline({ order }: { order: OrderSnapshot }) {
+  const current = ORDER_STATUSES.indexOf(order.status);
+  const steps = [
+    { key: "new", label: t.tlCreated, at: order.createdAt },
+    { key: "ready", label: ORDER_STATUS_LABEL.ready, at: current === 1 ? order.updatedAt : null },
+    { key: "delivered", label: ORDER_STATUS_LABEL.delivered, at: current === 2 ? order.updatedAt : null },
+  ];
+
+  return (
+    <Card title={t.timeline}>
+      <ol className="relative ml-1">
+        {steps.map((s, i) => {
+          const done = i < current;
+          const active = i === current;
+          const dot = done
+            ? "border-profit bg-profit-soft text-profit"
+            : active
+              ? "border-accent bg-accent text-white"
+              : "border-border bg-surface-2 text-faint";
+          return (
+            <li key={s.key} className="flex gap-3 pb-4 last:pb-0">
+              <div className="flex flex-col items-center">
+                <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[0.68rem] font-bold ${dot}`}>
+                  {done ? "✓" : i + 1}
+                </span>
+                {i < steps.length - 1 && (
+                  <span className={`mt-1 w-[2px] flex-1 rounded-full ${i < current ? "bg-accent" : "bg-border"}`} />
+                )}
+              </div>
+              <div className="pb-1">
+                <p className={`text-sm font-semibold ${active ? "text-accent" : done ? "text-ink" : "text-faint"}`}>
+                  {s.label}
+                </p>
+                <p className="text-[0.72rem] text-faint">
+                  {s.at ? new Date(s.at).toLocaleString() : done ? t.tlDone : t.tlPending}
+                </p>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </Card>
+  );
+}
+
+/** Revenue split into cost + profit, as a single stacked bar (Part 8). */
+function ProfitBar({ revenue, cost, profit, currency }: { revenue: number; cost: number; profit: number; currency: string }) {
+  const total = Math.max(revenue, cost + profit, 1);
+  const costPct = Math.max(0, Math.min(100, (cost / total) * 100));
+  const profitPct = Math.max(0, Math.min(100, (profit / total) * 100));
+  return (
+    <div className="mt-3">
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-surface-2">
+        <div className="h-full bg-faint/50" style={{ width: `${costPct}%` }} title={t.internalCost} />
+        <div className="h-full bg-profit" style={{ width: `${profitPct}%` }} title={t.profit} />
+      </div>
+      <div className="mt-1.5 flex justify-between text-[0.72rem]">
+        <span className="text-muted">
+          {t.internalCost}: <span className="tnum">{formatAmount(cost, currency)}</span>
+        </span>
+        <span className="text-profit">
+          {t.profit}: <span className="tnum">{formatAmount(profit, currency)}</span>
+        </span>
+      </div>
+    </div>
   );
 }
 
